@@ -18,6 +18,7 @@ colab_training/
 ├── train.py                         # uv run python train.py train.epochs=10   (Hydra + Lightning)
 ├── infer.py                         # uv run python infer.py inference.cog=cog/<id>.tif   (Hydra + Lightning)
 ├── list_of_ids.txt                  # the OpenAerialMap items to download (committed)
+├── src/annotations.py               # labelme (10 cm) -> one GeoJSON per 5 cm tile (data/tiles_5cm/labels/)
 ├── src/fo_dataset.py                # 5 cm / 640 px tiles -> FiftyOne dataset with building ground truth
 ├── src/zeroshot.py                  # RT-DETR, OWLv2 and SAM2 zero-shot runs + FiftyOne evaluation
 ├── configs/

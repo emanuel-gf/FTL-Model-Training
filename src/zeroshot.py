@@ -16,7 +16,9 @@ Every prediction is labelled "building". The original model label is kept in `so
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 import fiftyone as fo
 import numpy as np
@@ -160,3 +162,68 @@ def compare_runs(summary: dict[str, dict]) -> pd.DataFrame:
     df = pd.DataFrame(summary).T
     print(df.to_string(float_format=lambda v: f"{v:.3f}"))
     return df
+
+
+def predict_scenes(detector, index_csv: str, out_dir: str, scenes: list[str] | None = None,
+                   nms_iou: float = 0.5, tile: int = 640) -> dict[str, int]:
+    """Run a detector over every tile of the chosen scenes and write one GeoJSON per scene.
+
+    Each box is moved from tile pixels to the CRS of the tiles (metres). Boxes of overlapping tiles are
+    merged with NMS, and the result is written as WGS84 polygons to <out_dir>/<scene_id>.geojson.
+    scenes=None runs every scene of the index. Returns {scene_id: number of buildings written}.
+    """
+    from shapely.geometry import Polygon, mapping
+    from torchvision.ops import nms
+
+    from src.annotations import tile_transform
+
+    index = pd.read_csv(index_csv)
+    if scenes is not None:
+        index = index[index["scene_id"].isin(scenes)]
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    written = {}
+    for scene_id, rows in index.groupby("scene_id", sort=True):
+        boxes, scores, owners, crs = [], [], [], None
+        for row in rows.itertuples(index=False):
+            crs = row.crs
+            res = (row.east - row.west) / tile
+            tf = tile_transform(row.west, row.north, res)
+            image = Image.open(row.tile_file).convert("RGB")
+            for p in detector.predict(image, res):
+                x1, y1 = max(p["box"][0], 0.0), max(p["box"][1], 0.0)
+                x2, y2 = min(p["box"][2], image.width), min(p["box"][3], image.height)
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                # tile pixels -> CRS metres: north-up, so the row index runs down from the top edge
+                X1, Y1 = tf.c + tf.a * x1, tf.f + tf.e * y1
+                X2, Y2 = tf.c + tf.a * x2, tf.f + tf.e * y2
+                boxes.append([min(X1, X2), min(Y1, Y2), max(X1, X2), max(Y1, Y2)])
+                scores.append(p["score"])
+                owners.append(row.tile_id)
+
+        features = []
+        if boxes:
+            keep = nms(torch.tensor(boxes, dtype=torch.float64),
+                       torch.tensor(scores, dtype=torch.float64), nms_iou).tolist()
+            for k in keep:
+                x1, y1, x2, y2 = boxes[k]
+                poly = _metres_to_lonlat(Polygon([(x1, y1), (x2, y1), (x2, y2), (x1, y2)]), crs)
+                features.append({"type": "Feature", "geometry": mapping(poly),
+                                 "properties": {"label": "building", "score": scores[k],
+                                                "tile_id": owners[k]}})
+            print(f"{scene_id}: {len(boxes)} boxes -> {len(features)} buildings after NMS")
+        doc = {"type": "FeatureCollection", "scene_id": scene_id, "crs": "EPSG:4326", "features": features}
+        (out / f"{scene_id}.geojson").write_text(json.dumps(doc), encoding="utf-8")
+        written[scene_id] = len(features)
+    return written
+
+
+def _metres_to_lonlat(geom, crs: str):
+    from rasterio.warp import transform as warp_transform
+    from shapely.ops import transform as shapely_transform
+
+    def fn(x, y):
+        return warp_transform(crs, "EPSG:4326", list(x), list(y))
+    return shapely_transform(fn, geom)
