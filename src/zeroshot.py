@@ -73,7 +73,9 @@ class Owlv2Detector:
         inputs = self.processor(text=[self.queries], images=image, return_tensors="pt").to(self.device)
         outputs = self.model(**inputs)
         target = torch.tensor([[image.height, image.width]], device=self.device)
-        res = self.processor.post_process_object_detection(outputs, threshold=self.threshold, target_sizes=target)[0]
+        # the processor does not have this method in every transformers version; the image processor does
+        res = self.processor.image_processor.post_process_object_detection(
+            outputs, threshold=self.threshold, target_sizes=target)[0]
         return [{"label": "building", "source_label": self.queries[int(lab)], "score": float(s), "box": b}
                 for b, s, lab in zip(res["boxes"].tolist(), res["scores"].tolist(), res["labels"].tolist())]
 
