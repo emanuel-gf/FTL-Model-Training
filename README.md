@@ -1,17 +1,33 @@
-# RT-DETR building detection: download, fine-tune, infer
+# Building detection teaching project: tiles, labels, zero-shot, embeddings, fine-tuning
 
-Self-contained folder for training and running RT-DETR on OpenAerialMap imagery. It runs on
-**Google Colab**, **Kaggle** or a local machine, and every command goes through **uv**.
+Two notebooks, one repository, one `pyproject.toml`:
 
-- **Training and testing** are PyTorch Lightning modules (`src/model.py`, `src/dataset.py`), run by a Lightning `Trainer`.
-- **Settings** are Hydra configs in `configs/` and can be overridden on the command line.
-- **Inference** reads 640 × 640 rasterio windows from each COG, predicts through Lightning, and writes one GeoJSON per class (lon/lat).
+- **`fiftyone_workflow.ipynb`** (your computer, `uv sync --group fo`, no torch): tiles and labels, FiftyOne viewer, test tags, model comparison, embedding map, new labels.
+- **`model_train.ipynb`** (Colab or Kaggle, `uv sync --group gpu`): zero-shot predictions, batch inference over the scenes, DINOv2 embeddings, RT-DETR fine-tuning, inference.
+- **`rtdetr_building_pipeline.ipynb`**: the earlier all-in-one notebook, kept as a reference.
+
+Both current notebooks use the same data, explicit in their setup cell: **`data/tiles_10cm/`** (tiles) and **`data/tiles_10cm/labels/`** (GeoJSON labels). The two labelled tiles in `data/labelme/images/` are the examples the labels are made from.
+
+## Data flow
+
+| Step | Where | Output |
+|---|---|---|
+| Tile the COGs | uv (`tile_cogs.py`) | `data/tiles_10cm/tiles/*.tif` + `tiles_index.csv` |
+| Export labels | uv (`export_annotations.py`) | `data/tiles_10cm/labels/<tile_id>.geojson` |
+| Predictions | cloud (`run_models.py`) | `outputs/predictions/<name>/<tile_id>.json`, `outputs/batch/<name>/<scene>.geojson` |
+| Embeddings | cloud (`embed.py`) | `data/embeddings/10cm/dinov2_base.npz` (vectors + `tile_id` inside) |
+| Fine-tune | cloud (`train.py`) | `outputs/<run>/hf_model/` |
+| Link and view | local (`fiftyone_workflow.ipynb`) | FiftyOne dataset, Brain map |
+
+Results go from the cloud to your computer as one zip (`results_for_local.zip`), unzipped at the root of the repository. The labels go the other way through git.
 
 ## Layout
 
 ```
 colab_training/
-├── rtdetr_building_pipeline.ipynb   # the notebook: runs every step
+├── model_train.ipynb                # CLOUD notebook: predictions, embeddings, fine-tuning (uv sync --group gpu)
+├── fiftyone_workflow.ipynb          # LOCAL notebook: FiftyOne viewer, labels, embedding map (uv sync --group fo)
+├── rtdetr_building_pipeline.ipynb   # reference: the earlier all-in-one notebook
 ├── download_images.py               # uv run python download_images.py --list list_of_ids.txt --out cog
 ├── download_model.py                # uv run python download_model.py --hub PekingU/rtdetr_r50vd --out models/rtdetr_r50
 ├── tile_cogs.py                     # uv run python tile_cogs.py --input cog --gsd 0.10 --tile 640 --output data/tiles
@@ -20,9 +36,13 @@ colab_training/
 ├── list_of_ids.txt                  # the OpenAerialMap items to download (committed)
 ├── export_annotations.py            # uv run python export_annotations.py  (labelme -> one GeoJSON per tile)
 ├── run_models.py                    # uv run python run_models.py --kind sam2 --weights ... --name ... --mode tiles|scenes
-├── src/annotations.py               # labelme (10 cm) -> one GeoJSON per 10 cm tile (data/tiles_10cm/labels/)
-├── src/zeroshot.py                  # RT-DETR, OWLv2, SAM2 detectors: writes per-tile JSON and per-scene GeoJSON (uv)
-├── src/fo_dataset.py                # FiftyOne dataset, predictions and evaluation (notebook kernel, pip, not uv)
+├── embed.py                         # uv run python embed.py --tiles data/tiles_10cm   (DINOv2, cloud)
+├── src/annotations.py               # labelme (10 cm) -> one GeoJSON per 10 cm tile; tile samples for training
+├── src/embeddings.py                # .npz embedding files: vectors + tile_id inside (numpy only)
+├── src/bootstrap.py                 # shared notebook start: uv sync for the group, path report
+├── src/naming.py                    # run names shared by notebooks and scripts
+├── src/zeroshot.py                  # RT-DETR, OWLv2, SAM2 detectors: per-tile JSON and per-scene GeoJSON (gpu)
+├── src/fo_dataset.py                # FiftyOne dataset, predictions, evaluation, embedding link (fo group)
 ├── configs/
 │   ├── config.yaml                  # root config
 │   ├── model/rtdetr_r50.yaml        # hub id or local checkpoint, classes, image size

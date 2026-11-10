@@ -16,7 +16,6 @@ Boxes are stored in FiftyOne's relative format [x, y, w, h] in [0, 1].
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import fiftyone as fo
@@ -24,7 +23,9 @@ import pandas as pd
 from fiftyone import ViewField as F
 from shapely.geometry import shape
 
-from src.annotations import lonlat_to_pixels, tile_transform
+from src.annotations import index_with_paths, lonlat_to_pixels, tile_transform
+from src.embeddings import load_embeddings, row_of
+from src.naming import run_name  # noqa: F401  (re-exported for the notebooks)
 
 DATASET_NAME = "building_tiles_10cm"
 
@@ -58,7 +59,7 @@ def build_dataset(tiles_dir: str = "data/tiles_10cm", labels_dir: str = "data/ti
             return fo.load_dataset(name)
         fo.delete_dataset(name)
 
-    index = pd.read_csv(Path(tiles_dir) / "tiles_index.csv")
+    index = index_with_paths(tiles_dir)
     labels_dir = Path(labels_dir)
 
     samples, n_annotated, n_boxes = [], 0, {}
@@ -78,6 +79,8 @@ def build_dataset(tiles_dir: str = "data/tiles_10cm", labels_dir: str = "data/ti
             filepath=str(Path(row.tile_file).resolve()),
             tile_id=row.tile_id,
             scene_id=row.scene_id,
+            crs=row.crs,
+            west=float(row.west), south=float(row.south), east=float(row.east), north=float(row.north),
             gsd_m=float(res),
             valid_fraction=float(row.valid_fraction),
             centre_lat=float(row.centre_lat),
@@ -101,12 +104,6 @@ def tag_test_samples(dataset: fo.Dataset, n: int = 10, seed: int = 51, tag: str 
     scenes = len(set(view.values("scene_id")))
     print(f"tagged {view.count()} annotated tiles as '{tag}' from {scenes} scene(s)")
     return dataset.match_tags(tag)
-
-
-def run_name(kind: str, weights: str) -> str:
-    """Name of a model run: the prediction folder and the FiftyOne field, e.g. 'owlv2_owlv2_base_patch16_ensemble'."""
-    base = weights.rstrip("/").split("/")[-1]
-    return re.sub(r"\W+", "_", f"{kind}_{base}").strip("_").lower()
 
 
 def add_predictions(view: fo.DatasetView, field: str, pred_dir: str) -> int:
@@ -162,3 +159,67 @@ def dataset_summary(dataset: fo.Dataset) -> None:
     print(f"{dataset.name}: {len(dataset)} samples")
     print("annotated:", dataset.count_values("annotated"))
     print("ground truth labels:", dataset.count_values("ground_truth.detections.label"))
+
+
+def aligned_embeddings(view: fo.DatasetView, npz_path: str) -> tuple:
+    """Vectors and sample ids of `view`, aligned row by row, from an embedding file.
+
+    The link is the tile_id stored inside the file. Before linking, the file must match the view:
+    same resolution, same tile size and the same tile bounds. Returns (vectors, sample_ids, emb) where
+    `vectors` is (N, D) in the view's order, `sample_ids` are FiftyOne ids (what src/active_learning.py
+    expects) and `emb` is the loaded file.
+    """
+    emb = load_embeddings(npz_path)
+    rows = row_of(emb)
+
+    first = view.first()
+    if abs(first.gsd_m - emb["resolution_m"]) > 1e-4:
+        raise ValueError(f"resolution mismatch: dataset tiles are {first.gsd_m:.3f} m, "
+                         f"the file is {emb['resolution_m']:.3f} m ({emb['model']})")
+    if emb["input_px"] and emb["input_px"] % 14:
+        raise ValueError(f"input size {emb['input_px']} is not a multiple of the DINOv2 patch (14)")
+
+    tile_ids = view.values("tile_id")
+    missing = [t for t in tile_ids if t not in rows]
+    if missing:
+        raise ValueError(f"{len(missing)} tiles of the view have no embedding, e.g. {missing[:3]}. "
+                         f"Embed all tiles of the dataset, or tag a view that the file covers.")
+
+    bad_bounds = 0
+    for s in view.iter_samples(progress=False):
+        b = emb["bounds"][rows[s.tile_id]]
+        ours = (s.west, s.south, s.east, s.north)
+        if any(abs(x - y) > 0.01 for x, y in zip(b, ours)):
+            bad_bounds += 1
+    if bad_bounds:
+        raise ValueError(f"{bad_bounds} tiles have different bounds in the file: the tiles were cut differently")
+
+    vectors = emb["vectors"][[rows[t] for t in tile_ids]]
+    sample_ids = view.values("id")
+    return vectors, sample_ids, emb
+
+
+def attach_embeddings(view: fo.DatasetView, npz_path: str, brain_key: str = "dinov2_tsne",
+                      method: str = "tsne") -> fo.DatasetView:
+    """Link an embedding file to the samples of `view`, store `embedding_row` and a 2-D t-SNE.
+
+    t-SNE is the method of notebook 08 (webinar-DL). The 2-D points are stored under `brain_key`
+    in FiftyOne Brain; the vectors themselves stay in the .npz file.
+    """
+    import fiftyone.brain as fob
+
+    vectors, sample_ids, emb = aligned_embeddings(view, npz_path)
+    rows = row_of(emb)
+    if method == "tsne" and len(sample_ids) <= 50:
+        # FiftyOne reduces to 50 dimensions with PCA before t-SNE, so it needs more than 50 samples
+        print(f"only {len(sample_ids)} tiles: t-SNE needs more than 50, using UMAP for this map")
+        method = "umap"
+    for s in view.iter_samples(autosave=True):
+        s["embedding_row"] = rows[s.tile_id]
+    if brain_key in view._dataset.list_brain_runs():
+        view._dataset.delete_brain_run(brain_key)
+    fob.compute_visualization(view, embeddings=vectors, brain_key=brain_key, method=method,
+                              num_dims=2, seed=42, verbose=False)
+    print(f"linked {len(sample_ids)} tiles to {npz_path} ({emb['model']}, {emb['resolution_m']} m, "
+          f"input {emb['input_px']} px), t-SNE in brain key '{brain_key}'")
+    return view

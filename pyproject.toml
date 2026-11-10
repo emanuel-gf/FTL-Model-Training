@@ -1,27 +1,36 @@
 [project]
 name = "colab-training"
 version = "0.1.0"
-description = "RT-DETR building detection: download COGs, tile, fine-tune and infer with PyTorch Lightning and Hydra"
+description = "Building detection teaching project: tile COGs, label, zero-shot, DINOv2 embeddings, fine-tune RT-DETR"
 requires-python = ">=3.10"
+# Base: everything that runs on your computer (tiling, labelme export, file handling). No torch here.
 dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "pillow>=10.0",
+    "rasterio>=1.3",
+    "shapely>=2.0",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "tqdm>=4.66",
+    "pystac-client>=0.8",
+    "matplotlib>=3.10.9",
+]
+
+[dependency-groups]
+# Local notebook (fiftyone_workflow.ipynb): the FiftyOne viewer. uv sync --group fo
+fo = ["fiftyone>=1.22.1", "ipykernel>=6.29", "jupyterlab>=4", "umap-learn>=0.5", "scipy>=1.11", "scikit-learn>=1.3"]
+# Cloud notebook (model_train.ipynb) and every model command. uv sync --group gpu
+gpu = [
     "torch>=2.2",
     "torchvision>=0.17",
-    "lightning>=2.4",
     "transformers>=4.50",
+    "lightning>=2.4",
     "torchmetrics>=1.4",
     "faster-coco-eval>=1.6",
     "hydra-core>=1.3",
     "omegaconf>=2.3",
-    "rasterio>=1.3",
-    "shapely>=2.0",
-    "numpy>=1.26",
-    "pandas>=2.0",
-    "pillow>=10.0",
-    "requests>=2.31",
-    "tqdm>=4.66",
-    "pystac-client>=0.8",
     "scipy>=1.11",
-    "matplotlib>=3.10.9",
 ]
 
 [tool.uv]

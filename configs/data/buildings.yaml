@@ -1,4 +1,10 @@
-# Tiles (.tif) and their labelme annotations (.json with the same name) in one folder.
+# TRAINING DATA = the 10 cm tiles and their GeoJSON annotations. This is the same data the notebooks use.
+#   tiles_dir/tiles/<tile_id>.tif      made by tile_cogs.py
+#   tiles_dir/labels/<tile_id>.geojson made by export_labels.py (from the labelme pairs)
+tiles_dir: data/tiles_10cm
+tile_size: 640
+
+# Legacy: labelme tiles read directly (used only when tiles_dir is removed from this file).
 labels_dir: data/labelme/images
 label_map:                # labelme label -> class name; null = ignore
   building: building

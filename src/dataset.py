@@ -17,6 +17,7 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
+from src.annotations import read_tile_samples
 from src.labels import read_labelme_samples
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -113,10 +114,16 @@ class TileDataModule(L.LightningDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         cfg = self.data_cfg
-        samples = read_labelme_samples(cfg["labels_dir"], cfg["label_map"], cfg["min_area_ratio"],
-                                       cfg.get("include_unlabelled", False))
+        if "tiles_dir" in cfg:
+            # the same tiles and GeoJSON annotations the notebooks use (see configs/data/buildings.yaml)
+            samples = read_tile_samples(cfg["tiles_dir"], cfg.get("tile_size", 640))
+            source = f"{cfg['tiles_dir']}/labels"
+        else:
+            samples = read_labelme_samples(cfg["labels_dir"], cfg["label_map"], cfg["min_area_ratio"],
+                                           cfg.get("include_unlabelled", False))
+            source = cfg["labels_dir"]
         if not samples:
-            raise FileNotFoundError(f"No annotated tiles (.tif with .json) in {cfg['labels_dir']}")
+            raise FileNotFoundError(f"No annotated tiles in {source}: run export_labels first")
 
         scenes = sorted({s["scene"] for s in samples})
         random.Random(cfg["split_seed"]).shuffle(scenes)

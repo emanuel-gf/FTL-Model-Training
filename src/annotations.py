@@ -196,3 +196,49 @@ def export_tile_annotations(index_csv: str | Path = "data/tiles_10cm/tiles_index
 
 def read_tile_annotation(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def index_with_paths(tiles_dir: str | Path) -> pd.DataFrame:
+    """The tile index of tiles_dir, with `tile_file` rebuilt from the folder.
+
+    The index stores the path where the tiles were written, which is machine-specific (Colab, Kaggle,
+    your computer). The file name is what matters: <tiles_dir>/tiles/<tile_id>.tif.
+    """
+    tiles_dir = Path(tiles_dir)
+    index = pd.read_csv(tiles_dir / "tiles_index.csv")
+    index["tile_file"] = [str(tiles_dir / "tiles" / f"{t}.tif") for t in index["tile_id"]]
+    return index
+
+
+def read_tile_samples(tiles_dir: str | Path, tile: int = 640) -> list[dict]:
+    """Training samples from the tiles folder: one per annotated tile (its GeoJSON exists).
+
+    Same format as src/labels.read_labelme_samples: tif, tile_id, scene, width, height, boxes in
+    tile pixels (x1, y1, x2, y2) and class_names. Tiles without a GeoJSON are not annotated, so skipped.
+    """
+    from shapely.geometry import shape
+
+    tiles_dir = Path(tiles_dir)
+    labels = tiles_dir / "labels"
+    samples = []
+    for row in index_with_paths(tiles_dir).itertuples(index=False):
+        ann = labels / f"{row.tile_id}.geojson"
+        if not ann.exists():
+            continue
+        res = (row.east - row.west) / tile
+        tf = tile_transform(row.west, row.north, res)
+        boxes, classes = [], []
+        for feat in json.loads(ann.read_text(encoding="utf-8")).get("features", []):
+            x1, y1, x2, y2 = lonlat_to_pixels(shape(feat["geometry"]), tf, row.crs).bounds
+            x1, y1, x2, y2 = max(x1, 0.0), max(y1, 0.0), min(x2, tile), min(y2, tile)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            boxes.append([x1, y1, x2, y2])
+            classes.append(feat["properties"]["label"])
+        samples.append({
+            "tif": row.tile_file, "tile_id": row.tile_id, "scene": row.scene_id,
+            "width": tile, "height": tile,
+            "boxes": np.asarray(boxes, dtype=np.float32).reshape(-1, 4),
+            "class_names": classes,
+        })
+    return samples
