@@ -1,0 +1,19 @@
+# OpenAerialMap items of São Bento do Una (Pernambuco), one ID or item URL per line.
+# Lines starting with '#' and blank lines are ignored.
+68c41fddae0fc8076633a74e
+68a78c9e27e991e401df2876
+68a78caf27e991e401df289b
+68a78cb427e991e401df28a2
+68a78ce127e991e401df2956
+68a78d0527e991e401df29cc
+685740b9e319ef725278cb92
+685740c7e319ef725278cbcf
+685740ade319ef725278cb5a
+685740c3e319ef725278cbc1
+68a4a953e50784296730bf0f
+68a5bc60e5584a0f62bfa185
+68a5bc04e5584a0f62bfa047
+68a5bc16e5584a0f62bfa08c
+68a5bc31e5584a0f62bfa0ff
+68a5bc63e5584a0f62bfa195
+68a5bc70e5584a0f62bfa1ce

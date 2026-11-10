@@ -1,0 +1,16 @@
+# Root Hydra config. Override any value on the command line, e.g.
+#   uv run python train.py train.epochs=5 train.batch_size=2 train.freeze_backbone=true
+defaults:
+  - model: rtdetr_r50
+  - data: buildings
+  - train: finetune
+  - inference: cog
+  - _self_
+
+seed: 42
+
+hydra:
+  job:
+    chdir: false                      # keep relative paths relative to colab_training/
+  run:
+    dir: outputs/${now:%Y-%m-%d_%H-%M-%S}

@@ -1,0 +1,22 @@
+# Fine-tuning settings (PyTorch Lightning Trainer + AdamW)
+epochs: 30
+batch_size: 4
+accumulate_grad_batches: 1      # effective batch = batch_size * accumulate_grad_batches
+lr: 1.0e-4
+backbone_lr_mult: 0.1           # backbone learning rate = lr * this
+weight_decay: 1.0e-4
+gradient_clip_val: 0.1
+scheduler: cosine               # cosine | none
+
+# Freezing: which initial parts stay fixed during fine-tuning
+freeze_backbone: false          # the ResNet backbone
+freeze_encoder: false           # the hybrid encoder
+freeze_decoder_layers: 0        # the first N decoder layers
+
+augment: true                   # random flips and transposes (aerial imagery is orientation-free)
+precision: 32                   # 32 | 16-mixed | bf16-mixed (GPU only)
+accelerator: auto               # auto | cpu | gpu | mps
+devices: 1
+patience: 10                    # early stopping on the monitored metric; 0 = off
+log_every_n_steps: 5
+limit_batches: null             # e.g. 3 for a quick smoke test (train/val/test batches)

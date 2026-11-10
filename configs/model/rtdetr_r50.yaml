@@ -1,0 +1,6 @@
+# Any RT-DETR checkpoint on the Hugging Face hub works, e.g. PekingU/rtdetr_r101vd
+name: rtdetr_r50
+hub_id: PekingU/rtdetr_r50vd
+checkpoint: null          # local folder from download_model.py, or a Lightning .ckpt; null = hub_id
+class_names: [building]   # the detector predicts these classes
+image_size: 640           # network input; tiles of this size are used as they are

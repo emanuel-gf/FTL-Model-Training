@@ -1,0 +1,14 @@
+# Inference over Cloud-Optimized GeoTIFFs with a sliding window
+cog: null                       # one COG file; null = every .tif in cog_dir
+cog_dir: cog
+gsd: 0.10                       # resample COGs to this ground resolution (m/px) first; null = native
+resampled_dir: cog/resampled    # where the resampled COGs are written
+window: 640                     # window read from the COG (must match the tiles used for training)
+stride: 512                     # 128 px overlap between windows
+batch_size: 8
+num_workers: 0
+min_valid_fraction: 0.9         # skip windows that are mostly outside the footprint
+score_threshold: 0.4
+nms_iou: 0.5                    # class-wise NMS across overlapping windows
+accelerator: auto
+geojson_dir: outputs/geojson
