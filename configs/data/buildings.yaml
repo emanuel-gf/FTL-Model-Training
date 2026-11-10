@@ -1,0 +1,12 @@
+# Tiles (.tif) and their labelme annotations (.json with the same name) in one folder.
+labels_dir: data/labelme/images
+label_map:                # labelme label -> class name; null = ignore
+  building: building
+  building-ext: building
+  lote: null              # parcels, not buildings
+min_area_ratio: 0.45      # keep a box only if at least this share of it stays inside the tile
+include_unlabelled: false # true: tiles without a .json are used as background-only samples
+val_fraction: 0.2         # share of SCENES held out for validation (split by scene, not by tile)
+test_fraction: 0.1        # share of SCENES held out for testing
+split_seed: 42
+num_workers: 2
