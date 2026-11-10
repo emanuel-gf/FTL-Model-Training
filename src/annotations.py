@@ -1,10 +1,10 @@
 """Per-tile building annotations as GeoJSON, mirroring the tiles folder.
 
-    export_tile_annotations("data/tiles_5cm/tiles_index.csv")
-    -> data/tiles_5cm/labels/<tile_id>.geojson   (one file per annotated tile)
+    export_tile_annotations("data/tiles_10cm/tiles_index.csv")
+    -> data/tiles_10cm/labels/<tile_id>.geojson   (one file per annotated tile)
 
 The source is the labelme annotation of the labelled tiles (data/labelme/images, 10 cm).
-Each labelme shape of a kept class is clipped to the 5 cm tile it falls in and written as a
+Each labelme shape of a kept class is clipped to the 10 cm tile it falls in and written as a
 Polygon in WGS84 (lon/lat), the same convention as the GeoJSON in outputs/.
 
 Rules (from configs/data/buildings.yaml):
@@ -95,7 +95,7 @@ def tile_polygons(shapes, lab_transform: Affine, tile_tf: Affine, tile: int,
                   min_area_ratio: float) -> list[tuple[str, BaseGeometry]]:
     """Labelme shapes moved into a tile's pixels and clipped to it.
 
-    The labelled tile and the 5 cm tile share the CRS and are north-up, so the change of pixels is a
+    The labelled tile and the 10 cm tile share the CRS and are north-up, so the change of pixels is a
     scale plus a shift. Returns (class, polygon in tile pixels), clipped to the tile.
     """
     m = ~tile_tf * lab_transform
@@ -144,9 +144,9 @@ def _polygons_of(geom: BaseGeometry) -> list[Polygon]:
     return list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
 
 
-def export_tile_annotations(index_csv: str | Path = "data/tiles_5cm/tiles_index.csv",
+def export_tile_annotations(index_csv: str | Path = "data/tiles_10cm/tiles_index.csv",
                             labels_dir: str | Path = "data/labelme/images",
-                            out_dir: str | Path = "data/tiles_5cm/labels",
+                            out_dir: str | Path = "data/tiles_10cm/labels",
                             tile: int = 640) -> Path:
     """Write one GeoJSON per annotated tile of the index into out_dir (the folder is rebuilt).
 

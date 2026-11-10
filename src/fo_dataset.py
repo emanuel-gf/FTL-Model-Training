@@ -1,11 +1,11 @@
-"""FiftyOne dataset of building tiles: 640 x 640 px at 5 cm, with the building annotations as ground truth.
+"""FiftyOne dataset of building tiles: 640 x 640 px at 10 cm, with the building annotations as ground truth.
 
-    export_tile_annotations()          # labelme -> data/tiles_5cm/labels/<tile_id>.geojson
-    dataset = build_dataset()          # tiles the COGs at 5 cm and adds every tile as a sample
+    export_tile_annotations()          # labelme -> data/tiles_10cm/labels/<tile_id>.geojson
+    dataset = build_dataset()          # tiles the COGs at 10 cm and adds every tile as a sample
     test = tag_test_samples(dataset)   # tags a few annotated tiles as "test" for the zero-shot check
 
 Ground truth is the field `ground_truth` (fo.Detections, boxes in relative coordinates), read from
-the per-tile GeoJSON in data/tiles_5cm/labels. A tile is annotated when its GeoJSON exists.
+the per-tile GeoJSON in data/tiles_10cm/labels. A tile is annotated when its GeoJSON exists.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from shapely.geometry import shape
 from src.annotations import lonlat_to_pixels, tile_transform
 from src.tiler import tile_cogs
 
-DATASET_NAME = "building_tiles_5cm"
+DATASET_NAME = "building_tiles_10cm"
 
 
 def tile_boxes_from_annotation(path: Path, tile_tf, crs: str, tile: int) -> list[list[float]]:
@@ -40,8 +40,8 @@ def tile_boxes_from_annotation(path: Path, tile_tf, crs: str, tile: int) -> list
     return boxes
 
 
-def build_dataset(cog_dir: str = "cog", labels_dir: str = "data/tiles_5cm/labels",
-                  tiles_dir: str = "data/tiles_5cm", gsd: float = 0.05, tile: int = 640,
+def build_dataset(cog_dir: str = "cog", labels_dir: str = "data/tiles_10cm/labels",
+                  tiles_dir: str = "data/tiles_10cm", gsd: float = 0.10, tile: int = 640,
                   overlap: int = 128, min_valid: float = 0.9, retile: bool = True,
                   name: str = DATASET_NAME, overwrite: bool = False) -> fo.Dataset:
     """Tile every COG at `gsd` m/px and build the FiftyOne dataset with the GeoJSON annotations.
