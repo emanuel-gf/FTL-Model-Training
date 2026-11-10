@@ -18,9 +18,11 @@ colab_training/
 ├── train.py                         # uv run python train.py train.epochs=10   (Hydra + Lightning)
 ├── infer.py                         # uv run python infer.py inference.cog=cog/<id>.tif   (Hydra + Lightning)
 ├── list_of_ids.txt                  # the OpenAerialMap items to download (committed)
+├── export_annotations.py            # uv run python export_annotations.py  (labelme -> one GeoJSON per tile)
+├── run_models.py                    # uv run python run_models.py --kind sam2 --weights ... --name ... --mode tiles|scenes
 ├── src/annotations.py               # labelme (10 cm) -> one GeoJSON per 10 cm tile (data/tiles_10cm/labels/)
-├── src/fo_dataset.py                # 10 cm / 640 px tiles -> FiftyOne dataset with building ground truth
-├── src/zeroshot.py                  # RT-DETR, OWLv2 and SAM2 zero-shot runs + FiftyOne evaluation
+├── src/zeroshot.py                  # RT-DETR, OWLv2, SAM2 detectors: writes per-tile JSON and per-scene GeoJSON (uv)
+├── src/fo_dataset.py                # FiftyOne dataset, predictions and evaluation (notebook kernel, pip, not uv)
 ├── configs/
 │   ├── config.yaml                  # root config
 │   ├── model/rtdetr_r50.yaml        # hub id or local checkpoint, classes, image size

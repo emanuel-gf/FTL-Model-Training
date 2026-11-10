@@ -22,7 +22,6 @@ dependencies = [
     "pystac-client>=0.8",
     "scipy>=1.11",
     "matplotlib>=3.10.9",
-    "fiftyone>=1.22.1",
 ]
 
 [tool.uv]

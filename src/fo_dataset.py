@@ -1,16 +1,22 @@
-"""FiftyOne dataset of building tiles: 640 x 640 px at 10 cm, with the building annotations as ground truth.
+"""FiftyOne side of the pipeline. Runs in the notebook kernel (pip), never under uv.
 
-    export_tile_annotations()          # labelme -> data/tiles_10cm/labels/<tile_id>.geojson
-    dataset = build_dataset()          # tiles the COGs at 10 cm and adds every tile as a sample
-    test = tag_test_samples(dataset)   # tags a few annotated tiles as "test" for the zero-shot check
+uv produces the files, this module only reads them:
+    tile_cogs.py          -> data/tiles_10cm/tiles/*.tif + tiles_index.csv
+    export_annotations.py -> data/tiles_10cm/labels/<tile_id>.geojson       (ground truth)
+    run_models.py         -> outputs/predictions/<name>/<tile_id>.json      (per-tile predictions)
 
-Ground truth is the field `ground_truth` (fo.Detections, boxes in relative coordinates), read from
-the per-tile GeoJSON in data/tiles_10cm/labels. A tile is annotated when its GeoJSON exists.
+    dataset = build_dataset()                 # one sample per tile, ground truth from the GeoJSON
+    test = tag_test_samples(dataset, n=10)    # a few annotated tiles tagged "test"
+    add_predictions(test, field, pred_dir)    # attach a model's predictions
+    summary = evaluate_run(test, field)       # IoU 0.5 metrics against ground_truth
+
+Boxes are stored in FiftyOne's relative format [x, y, w, h] in [0, 1].
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import fiftyone as fo
@@ -19,13 +25,12 @@ from fiftyone import ViewField as F
 from shapely.geometry import shape
 
 from src.annotations import lonlat_to_pixels, tile_transform
-from src.tiler import tile_cogs
 
 DATASET_NAME = "building_tiles_10cm"
 
 
-def tile_boxes_from_annotation(path: Path, tile_tf, crs: str, tile: int) -> list[list[float]]:
-    """Relative [x, y, w, h] boxes of the buildings in one tile's GeoJSON (bounds of each polygon)."""
+def tile_boxes_from_annotation(path: Path, tile_tf, crs: str, tile: int) -> list[tuple[str, list[float]]]:
+    """(label, relative [x, y, w, h]) for the buildings in one tile's GeoJSON (bounds of each polygon)."""
     doc = json.loads(path.read_text(encoding="utf-8"))
     boxes = []
     for feat in doc.get("features", []):
@@ -40,14 +45,12 @@ def tile_boxes_from_annotation(path: Path, tile_tf, crs: str, tile: int) -> list
     return boxes
 
 
-def build_dataset(cog_dir: str = "cog", labels_dir: str = "data/tiles_10cm/labels",
-                  tiles_dir: str = "data/tiles_10cm", gsd: float = 0.10, tile: int = 640,
-                  overlap: int = 128, min_valid: float = 0.9, retile: bool = True,
-                  name: str = DATASET_NAME, overwrite: bool = False) -> fo.Dataset:
-    """Tile every COG at `gsd` m/px and build the FiftyOne dataset with the GeoJSON annotations.
+def build_dataset(tiles_dir: str = "data/tiles_10cm", labels_dir: str = "data/tiles_10cm/labels",
+                  tile: int = 640, name: str = DATASET_NAME, overwrite: bool = False) -> fo.Dataset:
+    """One FiftyOne sample per tile of tiles_index.csv, with the GeoJSON annotations as `ground_truth`.
 
-    retile=True re-tiles the COGs. If the dataset already exists it is loaded, unless overwrite=True.
-    Run export_tile_annotations() first, so that labels_dir is up to date.
+    The tiles must already exist (tile_cogs.py) and the annotations must be exported (export_annotations.py).
+    If the dataset already exists it is loaded, unless overwrite=True rebuilds it.
     """
     if fo.dataset_exists(name):
         if not overwrite:
@@ -55,14 +58,7 @@ def build_dataset(cog_dir: str = "cog", labels_dir: str = "data/tiles_10cm/label
             return fo.load_dataset(name)
         fo.delete_dataset(name)
 
-    tiles_dir = Path(tiles_dir)
-    index_csv = tiles_dir / "tiles_index.csv"
-    if retile or not index_csv.exists():
-        # a separate resampled folder per gsd: tile_cogs reuses resampled files by name
-        resampled = Path(cog_dir) / f"resampled_{round(gsd * 100)}cm"
-        tile_cogs(cog_dir, tiles_dir, gsd=gsd, tile=tile, overlap=overlap,
-                  min_valid=min_valid, resampled_dir=resampled)
-    index = pd.read_csv(index_csv)
+    index = pd.read_csv(Path(tiles_dir) / "tiles_index.csv")
     labels_dir = Path(labels_dir)
 
     samples, n_annotated, n_boxes = [], 0, {}
@@ -105,6 +101,61 @@ def tag_test_samples(dataset: fo.Dataset, n: int = 10, seed: int = 51, tag: str 
     scenes = len(set(view.values("scene_id")))
     print(f"tagged {view.count()} annotated tiles as '{tag}' from {scenes} scene(s)")
     return dataset.match_tags(tag)
+
+
+def run_name(kind: str, weights: str) -> str:
+    """Name of a model run: the prediction folder and the FiftyOne field, e.g. 'owlv2_owlv2_base_patch16_ensemble'."""
+    base = weights.rstrip("/").split("/")[-1]
+    return re.sub(r"\W+", "_", f"{kind}_{base}").strip("_").lower()
+
+
+def add_predictions(view: fo.DatasetView, field: str, pred_dir: str) -> int:
+    """Attach the per-tile prediction JSON files of `pred_dir` to `field` of the samples in `view`.
+
+    Samples without a file get an empty field. Returns how many samples had predictions.
+    """
+    pred_dir = Path(pred_dir)
+    found = 0
+    for sample in view.iter_samples(progress=True, autosave=True):
+        path = pred_dir / f"{sample.tile_id}.json"
+        dets = []
+        if path.exists():
+            found += 1
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            w, h = doc["width"], doc["height"]
+            for p in doc["detections"]:
+                x1, y1, x2, y2 = p["box"]
+                dets.append(fo.Detection(
+                    label=p["label"], confidence=p["score"], source_label=p["source_label"],
+                    bounding_box=[x1 / w, y1 / h, (x2 - x1) / w, (y2 - y1) / h]))
+        sample[field] = fo.Detections(detections=dets)
+    print(f"{found} of {len(view)} tiles had predictions in {pred_dir}/")
+    return found
+
+
+def evaluate_run(view: fo.DatasetView, field: str, iou: float = 0.5) -> dict:
+    """Score `field` against `ground_truth` on `view`. Returns mAP, precision, recall, F1 and counts."""
+    eval_key = f"eval_{field}"
+    results = view.evaluate_detections(field, gt_field="ground_truth", eval_key=eval_key,
+                                       iou=iou, compute_mAP=True)
+    metrics = results.metrics()
+    return {
+        "mAP_50_95": results.mAP(),
+        "precision": metrics["precision"],
+        "recall": metrics["recall"],
+        "f1": metrics["fscore"],
+        "tp": view.sum(f"{eval_key}_tp"),
+        "fp": view.sum(f"{eval_key}_fp"),
+        "fn": view.sum(f"{eval_key}_fn"),
+        "predictions": view.count_values(f"{field}.detections.label").get("building", 0),
+    }
+
+
+def compare_runs(summary: dict[str, dict]) -> pd.DataFrame:
+    """Table with one row per run (the output of evaluate_run, keyed by field name)."""
+    df = pd.DataFrame(summary).T
+    print(df.to_string(float_format=lambda v: f"{v:.3f}"))
+    return df
 
 
 def dataset_summary(dataset: fo.Dataset) -> None:

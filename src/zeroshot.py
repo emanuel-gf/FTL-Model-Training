@@ -1,32 +1,32 @@
-"""Zero-shot building detection on the FiftyOne tiles: RT-DETR, OWLv2 and SAM2, scored in FiftyOne.
+"""Pretrained building detectors (RT-DETR, OWLv2, SAM2). Runs under uv, writes files only.
 
-    detector = load_detector("owlv2", "google/owlv2-base-patch16-ensemble", pick_device(), score_threshold=0.2)
-    run_detector(view, detector, field="owlv2_owlv2_base_patch16_ensemble")
-    metrics = evaluate_run(view, field)
-
-Each detector returns boxes in tile pixels. run_detector stores them as fo.Detections in `field`,
-and evaluate_run compares them with `ground_truth` (IoU 0.5 and the COCO-style mAP).
+Two kinds of output, read by the notebook kernel (FiftyOne lives there, not here):
+- predict_tiles: one JSON per annotated tile in outputs/predictions/<name>/<tile_id>.json
+  (pixel boxes of the tile, so the kernel can attach them to the FiftyOne samples)
+- predict_scenes: one GeoJSON per scene in outputs/batch/<name>/<scene_id>.geojson (WGS84)
 
 Every prediction is labelled "building". The original model label is kept in `source_label`:
 - rtdetr: COCO-trained RT-DETR has no building class, so every COCO detection counts as a building.
   This is a baseline, not a building detector. A fine-tuned checkpoint with a `building` class works too.
 - owlv2: open-vocabulary, the text queries are the prompt (default "a building").
 - sam2: automatic mask generation is class-agnostic. Each mask is kept by score and footprint area only.
+
+Use the CLI run_models.py to call these from the notebook.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
-import fiftyone as fo
 import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
 from transformers import (AutoImageProcessor, Owlv2ForObjectDetection, Owlv2Processor,
                           RTDetrForObjectDetection, pipeline)
+
+from src.annotations import tile_transform
 
 
 def pick_device() -> str:
@@ -118,57 +118,36 @@ def load_detector(kind: str, weights: str, device: str, **options):
     return DETECTORS[kind](weights, device, **options)
 
 
-def run_field(kind: str, weights: str) -> str:
-    """Prediction field name for a run, e.g. 'owlv2_owlv2_base_patch16_ensemble'."""
-    base = weights.rstrip("/").split("/")[-1]
-    return re.sub(r"\W+", "_", f"{kind}_{base}").strip("_").lower()
+def predict_tiles(detector, index_csv: str, labels_dir: str, out_dir: str, tile: int = 640) -> int:
+    """Run the detector on every annotated tile (a GeoJSON exists in labels_dir) and write one JSON each.
 
-
-def run_detector(view: fo.DatasetView, detector, field: str) -> None:
-    """Run the detector on every tile of `view` and store the boxes in `field`."""
-    for sample in view.iter_samples(progress=True, autosave=True):
-        image = Image.open(sample.filepath).convert("RGB")
-        width, height = image.size
+    JSON: {"tile_id", "width", "height", "detections": [{"label", "source_label", "score", "box": [x1, y1, x2, y2]}]}
+    with the box in tile pixels. Returns the number of tiles written.
+    """
+    index = pd.read_csv(index_csv)
+    labels_dir = Path(labels_dir)
+    rows = [r for r in index.itertuples(index=False) if (labels_dir / f"{r.tile_id}.geojson").exists()]
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    for row in rows:
+        image = Image.open(row.tile_file).convert("RGB")
+        res = (row.east - row.west) / tile
         dets = []
-        for p in detector.predict(image, sample.gsd_m):
+        for p in detector.predict(image, res):
             x1, y1 = max(p["box"][0], 0.0), max(p["box"][1], 0.0)
-            x2, y2 = min(p["box"][2], width), min(p["box"][3], height)
+            x2, y2 = min(p["box"][2], image.width), min(p["box"][3], image.height)
             if x2 <= x1 or y2 <= y1:
                 continue
-            dets.append(fo.Detection(
-                label=p["label"], confidence=p["score"], source_label=p["source_label"],
-                bounding_box=[x1 / width, y1 / height, (x2 - x1) / width, (y2 - y1) / height]))
-        sample[field] = fo.Detections(detections=dets)
-
-
-def evaluate_run(view: fo.DatasetView, field: str, iou: float = 0.5) -> dict:
-    """Score `field` against `ground_truth` on `view`. Returns mAP, precision, recall, F1 and counts."""
-    eval_key = f"eval_{field}"
-    results = view.evaluate_detections(field, gt_field="ground_truth", eval_key=eval_key,
-                                       iou=iou, compute_mAP=True)
-    metrics = results.metrics()
-    return {
-        "mAP_50_95": results.mAP(),
-        "precision": metrics["precision"],
-        "recall": metrics["recall"],
-        "f1": metrics["fscore"],
-        "tp": view.sum(f"{eval_key}_tp"),
-        "fp": view.sum(f"{eval_key}_fp"),
-        "fn": view.sum(f"{eval_key}_fn"),
-        "predictions": view.count_values(f"{field}.detections.label").get("building", 0),
-    }
-
-
-def compare_runs(summary: dict[str, dict]) -> pd.DataFrame:
-    """Table with one row per run (the output of evaluate_run, keyed by field name)."""
-    df = pd.DataFrame(summary).T
-    print(df.to_string(float_format=lambda v: f"{v:.3f}"))
-    return df
+            dets.append({"label": p["label"], "source_label": p["source_label"], "score": p["score"],
+                         "box": [x1, y1, x2, y2]})
+        doc = {"tile_id": row.tile_id, "width": image.width, "height": image.height, "detections": dets}
+        (out / f"{row.tile_id}.json").write_text(json.dumps(doc), encoding="utf-8")
+    return len(rows)
 
 
 def predict_scenes(detector, index_csv: str, out_dir: str, scenes: list[str] | None = None,
                    nms_iou: float = 0.5, tile: int = 640) -> dict[str, int]:
-    """Run a detector over every tile of the chosen scenes and write one GeoJSON per scene.
+    """Run the detector over every tile of the chosen scenes and write one GeoJSON per scene.
 
     Each box is moved from tile pixels to the CRS of the tiles (metres). Boxes of overlapping tiles are
     merged with NMS, and the result is written as WGS84 polygons to <out_dir>/<scene_id>.geojson.
@@ -177,10 +156,8 @@ def predict_scenes(detector, index_csv: str, out_dir: str, scenes: list[str] | N
     from shapely.geometry import Polygon, mapping
     from torchvision.ops import nms
 
-    from src.annotations import tile_transform
-
     index = pd.read_csv(index_csv)
-    if scenes is not None:
+    if scenes:
         index = index[index["scene_id"].isin(scenes)]
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
